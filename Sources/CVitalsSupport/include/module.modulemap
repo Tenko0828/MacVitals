@@ -1,0 +1,4 @@
+module CVitalsSupport {
+    header "CVitalsSupport.h"
+    export *
+}
