@@ -52,50 +52,18 @@ extension VitalsMonitor {
     public func software() -> SoftwareInfo {
         softwareLock.holding {
             if let (date,cache) = softwareCache, Date().timeIntervalSince(date) < 60 { return cache }
-            func output(_ path: String,_ args: [String] = [],timeout: Double = 5) -> String? {
-                guard let r = command(path,args,timeout:timeout),r.status == 0,!r.output.isEmpty else { return nil }; return r.output
-            }
-            let version = output("/usr/bin/sw_vers",["-productVersion"])
-            let build = output("/usr/bin/sw_vers",["-buildVersion"])
-            let sip = output("/usr/bin/csrutil",["status"])
-            let fv = output("/usr/bin/fdesetup",["status"])
-            let gate = output("/usr/sbin/spctl",["--status"])
-            let firewall = output("/usr/libexec/ApplicationFirewall/socketfilterfw",["--getglobalstate"])
+            let extras = SoftwareExtras.collect()
+            let sip = extras.output("sip")
+            let fv = extras.output("filevault")
+            let gate = extras.output("gatekeeper")
+            let firewall = extras.output("firewall")
             func enabled(_ value: String?,yes: String,no: String) -> Bool? {
                 guard let s = value?.lowercased() else { return nil }
                 if s.contains(no) { return false }; if s.contains(yes) { return true }; return nil
             }
-            var sections: [InfoSection] = []
-            let security = [("SIP",sip),("FileVault",fv),("Gatekeeper",gate),("防火墙",firewall),("系统完整性",output("/usr/bin/csrutil",["authenticated-root","status"]))].compactMap { key,value in value.map { InfoItem(key,$0) } }
-            sections.append(InfoSection(title:"系统安全",items:security))
-            var tools: [InfoItem] = []
-            if let s = output("/usr/bin/xcode-select",["-p"]) { tools.append(InfoItem("开发工具目录",s)) }
-            let runtimes: [(String,[String],[String])] = [
-                ("Swift",["/usr/bin/swift"],["--version"]),
-                ("Python",["/opt/homebrew/bin/python3","/usr/local/bin/python3","/usr/bin/python3"],["--version"]),
-                ("Node.js",["/opt/homebrew/bin/node","/usr/local/bin/node"],["--version"]),
-                ("Git",["/opt/homebrew/bin/git","/usr/bin/git"],["--version"])]
-            for (name,paths,args) in runtimes { if let path = executable(paths),let s = output(path,args) { tools.append(InfoItem(name,s)) } }
-            if let brew = executable(["/opt/homebrew/bin/brew","/usr/local/bin/brew"]) {
-                if let s = output(brew,["--version"]) { tools.append(InfoItem("Homebrew",s)) }
-                for (kind,title) in [("--formula","Formula 数"),("--cask","Cask 数")] {
-                    if let r = command(brew,["list",kind],timeout:5),r.status == 0 { tools.append(InfoItem(title,String(r.output.split(separator:"\n").count))) }
-                }
-            }
-            sections.append(InfoSection(title:"开发环境",items:tools))
-            let fm = FileManager.default
-            let rosetta = fm.fileExists(atPath:"/Library/Apple/usr/libexec/oah/libRosettaRuntime") || fm.fileExists(atPath:"/Library/Apple/System/Library/LaunchDaemons/com.apple.oahd.plist")
-            var apps = Set<String>()
-            for path in ["/Applications","/System/Applications",NSHomeDirectory()+"/Applications"] {
-                if let e = fm.enumerator(at:URL(fileURLWithPath:path),includingPropertiesForKeys:nil,options:[.skipsHiddenFiles,.skipsPackageDescendants]) {
-                    for case let url as URL in e where url.pathExtension == "app" { apps.insert(url.path) }
-                }
-            }
             let now = ProcessInfo.processInfo
-            let environment = [InfoItem("Shell",now.environment["SHELL"] ?? ""),InfoItem("区域",Locale.current.identifier),InfoItem("时区",TimeZone.current.identifier),InfoItem("语言",Locale.preferredLanguages.joined(separator:", ")),InfoItem("Rosetta 已安装",rosetta ? "是" : "否"),InfoItem("App 数量",String(apps.count)),InfoItem("开机时长（秒）",String(Int(now.systemUptime))),InfoItem("低电量模式",now.isLowPowerModeEnabled ? "开" : "关")]
-            sections.append(InfoSection(title:"环境",items:environment))
             let os = now.operatingSystemVersion
-            let result = SoftwareInfo(osName:output("/usr/bin/sw_vers",["-productName"]) ?? "macOS",osVersion:version ?? "\(os.majorVersion).\(os.minorVersion).\(os.patchVersion)",osBuild:build ?? sysString("kern.osversion") ?? "",kernelVersion:output("/usr/bin/uname",["-v"]) ?? sysString("kern.version") ?? "",hostname:ProcessInfo.processInfo.hostName,computerName:SCDynamicComputerName(),userName:NSUserName(),bootTime:bootDate(),sipEnabled:enabled(sip,yes:"enabled",no:"disabled"),fileVaultOn:enabled(fv,yes:"on",no:"off"),gatekeeperOn:enabled(gate,yes:"enabled",no:"disabled"),firewallOn:enabled(firewall,yes:"enabled",no:"disabled"),sections:sections.filter { !$0.items.isEmpty })
+            let result = SoftwareInfo(osName:extras.osName,osVersion:extras.osVersion ?? "\(os.majorVersion).\(os.minorVersion).\(os.patchVersion)",osBuild:extras.osBuild ?? sysString("kern.osversion") ?? "",kernelVersion:sysString("kern.version") ?? "",hostname:now.hostName,computerName:SCDynamicComputerName(),userName:NSUserName(),bootTime:bootDate(),sipEnabled:enabled(sip,yes:"enabled",no:"disabled"),fileVaultOn:enabled(fv,yes:"on",no:"off"),gatekeeperOn:enabled(gate,yes:"enabled",no:"disabled"),firewallOn:enabled(firewall,yes:"enabled",no:"disabled"),sections:extras.sections())
             softwareCache = (Date(),result); return result
         }
     }
